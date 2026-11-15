@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f7f8f5">
+  <meta name="description" content="上传听力，逐句精听。英语与日语学习工作台。">
+  <title>言间 · 语言精听工作台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="言间首页">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span class="brand-name">言间<span class="brand-dot">.</span></span>
+      </a>
+      <div class="sidebar-label">学习空间</div>
+      <nav class="primary-nav" aria-label="主导航">
+        <button class="nav-item active" data-nav="library"><span class="nav-icon">▤</span>全部材料<span class="nav-count" id="lesson-count">0</span></button>
+        <button class="nav-item" data-nav="vocabulary"><span class="nav-icon">◈</span>我的词汇</button>
+      </nav>
+      <div class="sidebar-divider"></div>
+      <div class="library-heading"><span>最近学习</span><button class="icon-button small" id="new-upload-side" aria-label="上传音频" title="上传音频">＋</button></div>
+      <div class="lesson-list" id="lesson-list"></div>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-note"><div class="note-spark">✳</div><div><strong>每天一点点</strong><p>让听懂，慢慢变成习惯。</p></div></div>
+      <div class="profile"><div class="avatar">林</div><div class="profile-copy"><strong>个人学习空间</strong><span>本地保存</span></div><span class="local-lock" title="音频保存在本机">⌑</span></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="breadcrumb"><span>学习空间</span><span class="crumb-slash">/</span><strong id="breadcrumb-current">全部材料</strong></div>
+        <div class="topbar-actions"><span class="target-label"><span class="globe-icon">◎</span>翻译为</span><select id="target-language" aria-label="全局翻译目标语言"><option value="zh">简体中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="es">Español</option></select><span class="topbar-divider"></span><button class="help-button" id="help-button" title="使用说明">？</button></div>
+      </header>
+
+      <section class="view active" id="library-view">
+        <div class="page-intro"><div><div class="eyebrow"><span class="eyebrow-line"></span>YOUR LISTENING SPACE</div><h1>每一次聆听，<em>都更进一步。</em></h1><p class="page-subtitle">上传一段音频，从听懂每一句开始。</p></div><div class="intro-decoration"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit-core">言</div><span class="deco-dot dot-a"></span><span class="deco-dot dot-b"></span></div></div>
+        <div class="dashboard-grid">
+          <section class="upload-card" id="dropzone">
+            <input type="file" id="audio-file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" hidden>
+            <div class="upload-icon-wrap"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 31V9m0 0-8 8m8-8 8 8M10 29v8a3 3 0 0 0 3 3h22a3 3 0 0 0 3-3v-8"/></svg></div>
+            <div class="upload-copy"><h2>把一段声音，变成你的练习</h2><p>拖入音频文件，或从电脑中选择</p><div class="format-hint">MP3 · WAV · M4A · AAC · OGG · FLAC <span>最大 200 MB</span></div></div>
+            <div class="upload-controls"><label class="field-label" for="source-language">学习语言</label><select id="source-language"><option value="en">英语 English</option><option value="ja">日语 日本語</option></select><button class="button button-primary" id="choose-file"><span>选择音频</span><span class="button-arrow">↗</span></button></div>
+            <div class="drop-overlay"><span>松开鼠标，开始上传</span></div>
+          </section>
+          <section class="quick-start-card"><div class="quick-badge">QUICK START</div><div class="quick-illustration"><div class="sound-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="quick-disc"><span>♪</span></div></div><div class="quick-content"><h3>先来一段示例听力</h3><p>看看逐句精听是怎么工作的</p><button class="text-button" id="try-demo">体验示例 <span>→</span></button></div><div class="quick-decoration">01</div></section>
+        </div>
+        <div class="section-heading"><div><div class="eyebrow muted-eyebrow">YOUR LIBRARY</div><h2>我的听力材料 <span class="heading-count" id="heading-count">0</span></h2></div><button class="button button-quiet" id="refresh-lessons"><span class="refresh-symbol">↻</span>刷新</button></div>
+        <div class="library-grid" id="library-grid"></div>
+        <div class="empty-library" id="empty-library"><div class="empty-icon">♫</div><strong>这里还很安静</strong><p>上传一段你喜欢的英语或日语音频，开始第一次精听。</p><button class="text-button" id="empty-upload">上传第一段音频 <span>→</span></button></div>
+      </section>
+
+      <section class="view" id="workspace-view">
+        <div class="workspace-heading"><div><button class="back-link" id="back-library">← 全部材料</button><div class="title-line"><span class="language-tag" id="lesson-language-tag">EN</span><h1 id="lesson-title">听力材料</h1><button class="icon-button title-more" id="lesson-more" title="材料信息">···</button></div><div class="lesson-meta"><span id="lesson-duration">音频材料</span><span class="meta-dot">·</span><span id="sentence-total">0 句话</span><span class="meta-dot">·</span><span class="ready-label"><i></i><span id="lesson-status">准备就绪</span></span></div></div><button class="button button-outline" id="edit-toggle"><span class="edit-icon">✎</span><span>编辑听力稿</span></button></div>
+        <div class="player-card" id="player-card"><audio id="audio-player" preload="metadata"></audio><button class="play-main" id="play-main" aria-label="播放"><span class="play-triangle">▶</span></button><div class="player-main"><div class="player-topline"><span class="player-title" id="player-title">听力音频</span><span class="player-state" id="player-state">准备播放</span></div><div class="seek-row"><span class="timecode" id="current-time">00:00</span><input type="range" id="seek-bar" min="0" max="1000" value="0" aria-label="音频进度"><span class="timecode" id="duration-time">00:00</span></div></div><div class="player-tools"><button class="speed-button" id="speed-button">1×</button><button class="loop-button" id="loop-button" title="逐句循环播放">⟳<span>单句循环</span></button></div><div class="player-cover"><div class="cover-bars"><i></i><i></i><i></i><i></i><i></i></div><span>♫</span></div></div>
+        <div class="workspace-layout"><section class="transcript-column"><div class="transcript-toolbar"><div><div class="eyebrow muted-eyebrow">TRANSCRIPT</div><h2>逐句听力稿 <span class="heading-count" id="transcript-count">0</span></h2></div><div class="transcript-tools"><button class="tool-button" id="toggle-translations"><span>文</span>译文</button><button class="tool-button" id="play-all"><span>▶</span>连续播放</button></div></div><div class="edit-tip" id="edit-tip"><span>✦</span>点击任意一句播放；选择句中的词语查看释义。</div><div class="sentence-list" id="sentence-list"></div><div class="no-sentences" id="no-sentences" hidden><div class="spinner"></div><strong id="processing-title">正在准备你的听力稿…</strong><p id="processing-copy">识别需要一点时间，可以先听听音频。</p></div></section>
+          <aside class="study-aside"><div class="aside-card word-card"><div class="aside-card-heading"><span class="aside-icon word-icon">✳</span><span>词语卡片</span><span class="aside-kicker">WORD NOTES</span></div><div class="word-empty" id="word-empty"><div class="word-empty-mark">Aa</div><strong>遇到不熟悉的词？</strong><p>选中句子里的单词<br>这里会显示它的意思</p></div><div class="word-result" id="word-result" hidden><div class="word-source-line"><strong id="looked-word"></strong><span id="word-language"></span></div><p class="word-meaning" id="word-meaning"></p><div class="word-context" id="word-context"></div><div class="word-saved"><span>✓</span>已加入词汇记录</div></div></div><div class="aside-card progress-card"><div class="aside-card-heading"><span class="aside-icon progress-icon">◷</span><span>本次练习</span></div><div class="progress-number"><strong id="progress-number">0</strong><span> / <span id="progress-total">0</span> 句</span></div><div class="progress-track"><span id="progress-bar"></span></div><p>听过的句子会在这里留下记号</p></div><div class="aside-privacy"><span>⌑</span>音频与学习记录保存在本机</div></aside>
+        </div>
+      </section>
+
+      <section class="view" id="vocabulary-view"><div class="page-intro compact-intro"><div><div class="eyebrow"><span class="eyebrow-line"></span>MY VOCABULARY</div><h1>收藏的词语，<em>慢慢记住。</em></h1><p class="page-subtitle">从真实听力里积累的词，比单词表更有温度。</p></div></div><div class="vocab-list" id="vocab-list"></div><div class="empty-library" id="empty-vocabulary"><div class="empty-icon">◈</div><strong>还没有收藏词语</strong><p>在听力稿里选中一个单词，它会出现在这里。</p></div></section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"><span class="toast-mark">✦</span><span id="toast-message"></span></div>
+  <div class="modal-backdrop" id="modal-backdrop" hidden><section class="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title"><button class="modal-close" id="modal-close" aria-label="关闭">×</button><div class="eyebrow">A SMALL GUIDE</div><h2 id="help-title">让声音，慢慢变成自己的。</h2><p>上传英语或日语音频后，言间会在本机生成逐句听力稿。点一句跳到对应位置；选中一个词查询含义；每句的翻译按需生成。</p><div class="guide-row"><span>01</span><div><strong>音频识别</strong><p>首次使用需按 README 安装本地语音模型。</p></div></div><div class="guide-row"><span>02</span><div><strong>翻译与查词</strong><p>配置 LibreTranslate 兼容服务后即可使用。</p></div></div><div class="guide-row"><span>03</span><div><strong>本地优先</strong><p>材料、音频和学习记录保存在当前电脑。</p></div></div><button class="button button-primary modal-done" id="modal-done">知道了 <span class="button-arrow">→</span></button></section></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
