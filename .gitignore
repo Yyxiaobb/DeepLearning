@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 data/
 uploads/
+models/whisper/
 *.py[cod]
 .test-data/
 .pytest-tmp/

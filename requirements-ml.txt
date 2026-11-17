@@ -1,2 +1,4 @@
 -r requirements.txt
 faster-whisper>=1.1,<2
+# faster-whisper 1.2.x passes metadata_errors to av.open; PyAV 19 removed this keyword.
+av>=11,<19
