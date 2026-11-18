@@ -173,16 +173,17 @@ button { cursor: pointer; }
 .vocab-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
 .vocab-detail-card { background: #fff; border: 1px solid #e9efea; border-radius: 12px; padding: 20px; }
 .vocab-detail-label { color: #91a198; font-size: 11px; margin-bottom: 8px; }
-.vocab-detail-meaning { color: #4d896f; font-size: 16px; }
+.vocab-detail-meaning { color: #465b51; font-size: 13px; line-height: 1.75; }
 .definition-item { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 3px 8px; margin: 0 0 13px; line-height: 1.55; }
 .definition-item:last-child { margin-bottom: 0; }
 .definition-pos { color: #4d896f; font-size: 14px; font-weight: 700; }
 .definition-text { color: #4d896f; }
+.definition-source { grid-column: 2; color: #97a39b; font-size: 11px; line-height: 1.35; margin-top: 1px; }
 .definition-translation { grid-column: 2; color: #6a8174; font-size: 14px; }
 .definition-translation.unavailable { color: #a2afa7; font-style: italic; }
 .definition-unavailable { color: #9aa9a1; font-size: 13px; }
 .vocab-detail-context { color: #52675b; line-height: 1.7; }
-.vocab-detail-pronunciation { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 14px 0; }
+.vocab-detail-pronunciation { display: flex; flex-wrap: wrap; gap: 7px 12px; margin: 11px 0; }
 .vocab-detail-phonetic { color: #667b70; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
 .vocab-example { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 8px; margin: 0; padding: 12px 0; border-bottom: 1px dashed #e4ebe6; color: #52675b; line-height: 1.6; font-size: 13px; }
 .vocab-example:last-child { border-bottom: 0; }
@@ -209,3 +210,18 @@ button { cursor: pointer; }
 .vocab-list { width: 100%; max-width: none; }
 .vocab-item { grid-template-columns: minmax(0, 1fr) auto; padding: 0; min-width: 0; }
 @media (max-width: 640px) { .vocab-open { grid-template-columns: 1fr; gap: 6px; padding: 14px; }.vocab-open-hint { display: none; }.vocab-detail-grid { grid-template-columns: 1fr; } }
+
+/* Keep the study cards alongside the transcript while its page scrolls. */
+.workspace-layout { align-items: start; }
+.study-aside { position: sticky; top: 18px; align-self: start; align-content: start; grid-auto-rows: max-content; height: max-content; min-height: 0; max-height: none; overflow: visible; }
+.study-aside > .aside-card,.study-aside > .aside-privacy { position: static; height: auto; min-height: 0; max-height: none; overflow: visible; }
+.study-aside .word-card,.study-aside .dictionary-card,.study-aside .progress-card { height: auto; min-height: 0; max-height: none; overflow: visible; }
+.dictionary-result,.dictionary-meaning { height: auto; min-height: 0; max-height: none; overflow: visible; }
+.dictionary-pronunciation { min-width: 0; }
+@media (max-width: 900px) { .study-aside { position: static; top: auto; } }
+.sentence-text,.sentence-text .word { -webkit-user-select: text; user-select: text; }
+.sentence-text::selection,.sentence-text *::selection { background: #dcefe3; color: #3c7659; }
+.sentence-text::-moz-selection,.sentence-text *::-moz-selection { background: #dcefe3; color: #3c7659; }
+.sentence-text .word.phrase-selected { background: #dcefe3; color: #3c7659; border-radius: 3px; }
+body.dragging-word-selection .sentence-text,body.dragging-word-selection .sentence-text * { -webkit-user-select: none !important; user-select: none !important; }
+.word-save-button[hidden] { display: none; }

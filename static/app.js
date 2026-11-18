@@ -1,7 +1,10 @@
 const initialSidebarWidth = Number(localStorage.getItem('sidebar-width')) || (window.innerWidth <= 900 ? 205 : 248);
-const state = { lessons: [], currentLesson: null, targetLanguage: localStorage.getItem('target-language') || 'zh', recognitionModel: localStorage.getItem('recognition-model') || 'tiny', showTranslations: true, loopSentence: false, continuous: false, currentSentenceId: null, currentWord: null, dictionaryRequest: 0, dialogLessonId: null, dialogMode: null, sidebarWidth: initialSidebarWidth, playbackSeen: new Set() };
+const state = { lessons: [], currentLesson: null, targetLanguage: localStorage.getItem('target-language') || 'zh', recognitionModel: localStorage.getItem('recognition-model') || 'tiny', showTranslations: true, loopSentence: false, continuous: false, currentSentenceId: null, currentWord: null, currentPhrase: null, wordRequest: 0, lastPhraseSelection: '', dictionaryRequest: 0, dialogLessonId: null, dialogMode: null, sidebarWidth: initialSidebarWidth, playbackSeen: new Set() };
+let activeWordSelection = null;
+let suppressWordClick = false;
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const dictionaryAudioCache = new Map();
 const recognitionLabels = { tiny: '快速（tiny）', base: '平衡（base）', small: '精准（small）' }; const langNames = { en: 'English', ja: '日本語', zh: '简体中文', ko: '한국어', fr: 'Français', es: 'Español' };
 
 function escapeHtml(value) { return String(value == null ? '' : value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
@@ -28,7 +31,7 @@ function renderLibrary() {
   $$('.library-card').forEach((card) => card.addEventListener('click', () => openLesson(card.dataset.lessonId)));
 }
 async function loadLessons() { try { state.lessons = await api('/api/lessons'); renderLibrary(); } catch (error) { showToast(error.message); } }
-function showView(name) { if (name !== 'workspace') { state.currentLesson = null; renderSideLessons(); } $$('.view').forEach((view) => view.classList.toggle('active', view.id === name + '-view')); $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.nav === (name === 'vocabulary-detail' ? 'vocabulary' : name))); $('#breadcrumb-current').textContent = name === 'vocabulary' || name === 'vocabulary-detail' ? '我的词汇' : name === 'workspace' ? '听力工作台' : '全部材料'; }
+function showView(name) { if (name !== 'workspace') { state.currentLesson = null; resetLookupCards(); window.getSelection()?.removeAllRanges(); renderSideLessons(); } $$('.view').forEach((view) => view.classList.toggle('active', view.id === name + '-view')); $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.nav === (name === 'vocabulary-detail' ? 'vocabulary' : name))); $('#breadcrumb-current').textContent = name === 'vocabulary' || name === 'vocabulary-detail' ? '我的词汇' : name === 'workspace' ? '听力工作台' : '全部材料'; }
 function closeLessonTitleMenu() { const menu = $('#lesson-title-menu'); if (!menu) return; menu.hidden = true; $('#lesson-more').setAttribute('aria-expanded', 'false'); }
 function toggleLessonTitleMenu() { const menu = $('#lesson-title-menu'); if (!menu) return; menu.hidden = !menu.hidden; $('#lesson-more').setAttribute('aria-expanded', menu.hidden ? 'false' : 'true'); }
 function sentenceTranslation(sentenceId, language) { if (!state.currentLesson) return null; const sentence = state.currentLesson.sentences.find((item) => item.id === sentenceId); const text = sentence && (sentence.edited_text || sentence.original_text); return state.currentLesson.translations.find((item) => item.sentence_id === sentenceId && item.target_language === language && item.source_text === text); }
@@ -45,32 +48,83 @@ function renderSentences() {
 function bindSentence(item) {
   const id = item.dataset.sentenceId;
   item.querySelector('.sentence-play').addEventListener('click', (event) => { event.stopPropagation(); playSentence(id); });
-  item.querySelectorAll('.word').forEach((word) => { word.addEventListener('click', (event) => { event.stopPropagation(); lookupWord(id, word.dataset.word); }); word.addEventListener('keydown', (event) => { if (event.key === 'Enter') lookupWord(id, word.dataset.word); }); });
+  item.querySelectorAll('.word').forEach((word) => { word.addEventListener('click', (event) => { event.stopPropagation(); if (suppressWordClick) { suppressWordClick = false; return; } const selection = window.getSelection(); if (selection && !selection.isCollapsed && selection.toString().trim()) return; clearWordHighlights(); word.classList.add('phrase-selected'); lookupWord(id, word.dataset.word); }); word.addEventListener('keydown', (event) => { if (event.key === 'Enter') { clearWordHighlights(); word.classList.add('phrase-selected'); lookupWord(id, word.dataset.word); } }); });
   item.querySelector('.translate-action').addEventListener('click', (event) => { event.stopPropagation(); translateSentence(id); });
   item.querySelector('.edit-action').addEventListener('click', (event) => { event.stopPropagation(); editSentence(item, id); });
   item.querySelector('.split-action').addEventListener('click', (event) => { event.stopPropagation(); beginSplitSentence(item, id); });
   item.querySelector('.merge-action').addEventListener('click', (event) => { event.stopPropagation(); mergeNext(id); });
 }
 function updatePlayerSource() { const player = $('#audio-player'); const lesson = state.currentLesson && state.currentLesson.lesson; player.pause(); player.removeAttribute('src'); player.dataset.lessonId = lesson ? lesson.id : ''; player.currentTime = 0; $('#seek-bar').value = '0'; $('#current-time').textContent = '00:00'; $('#duration-time').textContent = '00:00'; $('#play-main').innerHTML = '<span class="play-triangle">▶</span>'; $('#player-card').dataset.lessonId = lesson ? lesson.id : ''; $('#player-title').textContent = lesson ? (lesson.audio_name || lesson.title || '听力音频') : '听力音频'; if (lesson && lesson.audio_path) { player.src = '/api/lessons/' + lesson.id + '/audio'; $('#player-state').textContent = '准备播放'; } else { $('#player-state').textContent = lesson ? '此示例没有音频' : '准备播放'; } player.load(); }
+function resetLookupCards() { state.wordRequest++; state.currentWord = null; state.currentPhrase = null; state.lastPhraseSelection = ''; state.dictionaryRequest++; $('#word-empty').hidden = false; $('#word-result').hidden = true; $('#word-save-button').hidden = false; $('#word-save-button').classList.remove('saved'); $('#word-save-button').setAttribute('aria-pressed', 'false'); $('#word-saved-status').textContent = '点击星标收藏'; $('#dictionary-card').hidden = false; $('#dictionary-empty').hidden = false; $('#dictionary-empty').textContent = '选中单词后，这里显示词典释义、音标和发音。'; $('#dictionary-result').hidden = true; }
 function renderProcessingState(lesson) { const processing = lesson.status === 'processing'; const waiting = lesson.status === 'uploaded'; const failed = lesson.status === 'failed'; const progress = Math.max(0, Math.min(100, Number(lesson.progress) || 0)); $('#processing-title').textContent = processing ? '正在生成你的听力稿…' : failed ? '识别没有完成' : waiting ? '等待开始识别' : '听力稿已准备好'; $('#processing-copy').textContent = lesson.progress_message || (processing ? '识别会在后台继续运行。' : waiting ? '安装本地识别模型后，可以重新开始。' : ''); $('#processing-spinner').hidden = !processing; $('#processing-progress').hidden = lesson.status === 'ready'; $('#processing-progress-bar').style.width = progress + '%'; $('#processing-percent').textContent = progress + '%'; $('#retry-transcription').hidden = !(waiting || failed); $('#retry-transcription').textContent = failed ? '重新识别' : '开始识别'; const banner = $('#processing-banner'); banner.hidden = !processing; if (processing) { banner.classList.add('active'); $('#processing-banner-title').textContent = '听力稿正在重新解析'; $('#processing-banner-copy').textContent = (lesson.progress_message || '识别任务在后台进行中') + ' · 当前模式：' + (recognitionLabels[state.recognitionModel] || state.recognitionModel); $('#processing-banner-bar').style.width = progress + '%'; $('#processing-banner-percent').textContent = progress + '%'; } }
 async function startTranscription(id) { try { await api('/api/lessons/' + id + '/transcribe', { method: 'POST' }); showToast('已开始识别，进度会在这里更新'); await openLesson(id); } catch (error) { showToast(error.message); if (state.currentLesson && state.currentLesson.lesson.id === id) renderProcessingState(state.currentLesson.lesson); } }
 async function reparseLesson(id) { try { await api('/api/lessons/' + id + '/reparse', { method: 'POST' }); showToast('已按当前识别模式重新解析'); await openLesson(id); } catch (error) { showToast(error.message); } }
 async function openLesson(id) {
-  try { state.currentLesson = await api('/api/lessons/' + id); state.playbackSeen = new Set(); state.currentSentenceId = null; const lesson = state.currentLesson.lesson; $('#lesson-title').textContent = lesson.title; const tag = $('#lesson-language-tag'); tag.textContent = lesson.source_language === 'ja' ? 'JA' : 'EN'; tag.classList.toggle('ja', lesson.source_language === 'ja'); $('#lesson-duration').textContent = lesson.audio_name ? '本地音频' : '示例听力'; $('#lesson-status').textContent = statusText(lesson.status); renderProcessingState(lesson); updatePlayerSource(); renderSentences(); updateProgress(); renderSideLessons(); showView('workspace'); if (lesson.status === 'processing') pollLesson(id); }
+  try { state.currentLesson = await api('/api/lessons/' + id); resetLookupCards(); state.playbackSeen = new Set(); state.currentSentenceId = null; const lesson = state.currentLesson.lesson; $('#lesson-title').textContent = lesson.title; const tag = $('#lesson-language-tag'); tag.textContent = lesson.source_language === 'ja' ? 'JA' : 'EN'; tag.classList.toggle('ja', lesson.source_language === 'ja'); $('#lesson-duration').textContent = lesson.audio_name ? '本地音频' : '示例听力'; $('#lesson-status').textContent = statusText(lesson.status); renderProcessingState(lesson); updatePlayerSource(); renderSentences(); updateProgress(); renderSideLessons(); showView('workspace'); if (lesson.status === 'processing') pollLesson(id); }
   catch (error) { showToast(error.message); }
 }
 async function pollLesson(id) { clearTimeout(pollLesson.timer); pollLesson.timer = setTimeout(async () => { try { const data = await api('/api/lessons/' + id); if (!state.currentLesson || state.currentLesson.lesson.id !== id) return; state.currentLesson = data; $('#lesson-status').textContent = statusText(data.lesson.status); renderProcessingState(data.lesson); if (data.lesson.status === 'processing') pollLesson(id); else { await loadLessons(); renderSentences(); if (data.lesson.status === 'ready') showToast('听力稿已经准备好了'); else if (data.lesson.status === 'failed') showToast(data.lesson.progress_message || '转写未完成'); } } catch (error) { showToast(error.message); } }, 1200); }
 function playSentence(id, continuous) { const item = document.querySelector('.sentence-item[data-sentence-id="' + id + '"]'); if (!item) return; const player = $('#audio-player'); if (!player.src) { item.classList.add('active'); showToast('这份示例材料没有可播放的音频'); return; } state.continuous = !!continuous; state.currentSentenceId = id; $$('.sentence-item').forEach((node) => node.classList.remove('active')); item.classList.add('active'); state.playbackSeen.add(id); updateProgress(); player.currentTime = Number(item.dataset.start) / 1000; player.play().catch(() => {}); $('#player-state').textContent = '第 ' + item.querySelector('.sentence-index').textContent + ' 句'; }
 async function translateSentence(id) { const button = document.querySelector('.sentence-item[data-sentence-id="' + id + '"] .translate-action'); if (button) button.textContent = '翻译中…'; try { const result = await api('/api/sentences/' + id + '/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_language: state.targetLanguage, force: true }) }); const index = state.currentLesson.translations.findIndex((item) => item.sentence_id === result.sentence_id && item.target_language === result.target_language && item.source_text === result.source_text); if (index >= 0) state.currentLesson.translations[index] = result; else state.currentLesson.translations.push(result); renderSentences(); showToast('已翻译为' + langNames[state.targetLanguage]); } catch (error) { if (button) button.textContent = '翻译这句'; showToast(error.message); } }
+function speakDictionaryWord(button) {
+  const word = button?.dataset.word || $('#dictionary-word')?.textContent || $('#vocab-detail-word')?.textContent || '';
+  if (!word || !('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
+    showToast('当前浏览器不支持发音');
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(word);
+  const locale = button?.dataset.locale || (button?.dataset.language === 'ja' ? 'ja-JP' : 'en-US');
+  utterance.lang = locale;
+  const voices = window.speechSynthesis.getVoices();
+  const wantedLanguage = locale.toLowerCase();
+  const preferredVoice = voices.find((voice) => voice.lang.toLowerCase() === wantedLanguage);
+  if (preferredVoice) utterance.voice = preferredVoice;
+  utterance.rate = 0.86;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+function getDictionaryAudio(raw) {
+  const normalized = raw.startsWith('//') ? 'https:' + raw : raw.replace(/^http:/i, 'https:');
+  const url = new URL(normalized, window.location.href);
+  if (!['https:', 'http:'].includes(url.protocol)) throw new Error('invalid protocol');
+  if (!dictionaryAudioCache.has(url.href)) {
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.src = url.href;
+    audio.load();
+    dictionaryAudioCache.set(url.href, audio);
+  }
+  return dictionaryAudioCache.get(url.href);
+}
+function warmDictionaryAudio(items) {
+  ['英式', '美式'].forEach((region) => {
+    const item = items.find((entry) => entry.region === region && entry.audio);
+    if (item) { try { getDictionaryAudio(item.audio); } catch (_) {} }
+  });
+}
 function playDictionaryAudio(button) {
-  const raw = button && button.dataset.audio;
+  const raw = String(button?.dataset.audio || '').trim();
+  if (!raw) return speakDictionaryWord(button);
   try {
-    const url = new URL(raw || '');
-    if (url.protocol !== 'https:') throw new Error('invalid protocol');
-    const audio = new Audio(url.href);
-    audio.addEventListener('error', () => showToast('发音音频暂时无法播放'), { once: true });
-    audio.play().catch(() => showToast('发音音频暂时无法播放'));
-  } catch (_) { showToast('发音链接无效'); }
+    const audio = getDictionaryAudio(raw);
+    audio.pause();
+    try { audio.currentTime = 0; } catch (_) {}
+    let finished = false;
+    let timeoutId;
+    const cleanup = () => { clearTimeout(timeoutId); audio.removeEventListener('playing', onPlaying); audio.removeEventListener('error', fallback); };
+    const onPlaying = () => { if (finished) return; finished = true; cleanup(); };
+    const fallback = () => {
+      if (finished) return;
+      finished = true; cleanup(); audio.pause();
+      try { audio.currentTime = 0; } catch (_) {}
+      speakDictionaryWord(button);
+    };
+    audio.addEventListener('playing', onPlaying, { once: true });
+    audio.addEventListener('error', fallback, { once: true });
+    timeoutId = setTimeout(fallback, 1800);
+    const playback = audio.play();
+    if (playback && typeof playback.catch === 'function') playback.catch(fallback);
+  } catch (_) { speakDictionaryWord(button); }
 }
 function bindDictionaryAudio(root) { (root || document).querySelectorAll('.dictionary-audio').forEach((button) => button.addEventListener('click', () => playDictionaryAudio(button))); }
 function escapeRegExp(value) { return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -79,8 +133,8 @@ function highlightPhrase(text, phrase, className) {
   if (!source || !needle) return escapeHtml(source);
   const startsWithWord = /^[\p{L}\p{N}_]/u.test(needle);
   const endsWithWord = /[\p{L}\p{N}_]$/u.test(needle);
-  const before = startsWithWord ? '(?<![\p{L}\p{N}_\'-])' : '';
-  const after = endsWithWord ? '(?![\p{L}\p{N}_\'-])' : '';
+  const before = startsWithWord ? String.raw`(?<![\p{L}\p{N}_'-])` : '';
+  const after = endsWithWord ? String.raw`(?![\p{L}\p{N}_'-])` : '';
   const regex = new RegExp(before + escapeRegExp(needle) + after, 'giu'); let output = ''; let cursor = 0; let match;
   while ((match = regex.exec(source)) !== null) { output += escapeHtml(source.slice(cursor, match.index)) + '<mark class="' + (className || 'vocab-highlight') + '">' + escapeHtml(match[0]) + '</mark>'; cursor = match.index + match[0].length; if (!match[0].length) regex.lastIndex++; }
   return output + escapeHtml(source.slice(cursor));
@@ -100,21 +154,177 @@ function highlightTranslation(text, phrase) {
   const candidate = candidates.find((item) => source.toLocaleLowerCase().includes(item.toLocaleLowerCase())) || candidates[0] || '';
   return highlightPhrase(source, candidate, 'vocab-highlight-translation');
 }
-const partOfSpeechLabels = { noun: 'n.', verb: 'v.', adjective: 'adj.', adverb: 'adv.', preposition: 'prep.', pronoun: 'pron.', conjunction: 'conj.', interjection: 'interj.' };
-function definitionItemsHtml(data) {
-  const items = data.definition_items || (data.definitions || []).map((item) => ({ part_of_speech: item.part_of_speech, text: item.text, translation: '' }));
+const partOfSpeechLabels = { noun: 'n.', verb: 'v.', adjective: 'adj.', adverb: 'adv.', preposition: 'prep.', pronoun: 'pron.', conjunction: 'conj.', interjection: 'interj.', determiner: 'det.', article: 'art.', 'auxiliary verb': 'aux. v.', 'modal verb': 'modal v.', 'phrasal verb': 'phr. v.', numeral: 'num.', particle: 'part.' };
+const definitionProviderLabels = { local_model: '本地模型生成', baidu_api: '百度翻译 API 生成', libretranslate: 'LibreTranslate API 生成', local_glossary: '本地词汇表释义', source_text: '原文', unavailable: '翻译暂不可用', unknown: '翻译来源未知' };
+function definitionItemsHtml(data, useBrief = false) {
+  const compact = useBrief && Array.isArray(data.brief_items) && data.brief_items.length > 0;
+  const items = compact ? data.brief_items : (data.definition_items || (data.definitions || []).map((item) => ({ part_of_speech: item.part_of_speech, text: item.text, translation: '' })));
   if (!items.length) return '<span class="definition-unavailable">暂无释义</span>';
   return items.map((item) => {
     const pos = partOfSpeechLabels[item.part_of_speech] || item.part_of_speech || '';
-    const translation = item.translation && item.translation !== item.text ? '<span class="definition-translation">' + escapeHtml(item.translation) + '</span>' : (data.target_language !== 'en' && !item.translation ? '<span class="definition-translation unavailable">暂未获取译文</span>' : '');
-    return '<div class="definition-item"><span class="definition-pos">' + escapeHtml(pos) + '</span><span class="definition-text">' + escapeHtml(item.text || '') + '</span>' + translation + '</div>';
+    const translation = compact ? '' : (item.translation && item.translation !== item.text ? '<span class="definition-translation">' + escapeHtml(item.translation) + '</span>' : (data.target_language !== 'en' && !item.translation ? '<span class="definition-translation unavailable">暂未获取译文</span>' : ''));
+    const provenance = compact && item.provider ? '<small class="definition-source">' + escapeHtml(definitionProviderLabels[item.provider] || '翻译来源未知') + '</small>' : '';
+    return '<div class="definition-item"><span class="definition-pos">' + escapeHtml(pos) + '</span><span class="definition-text">' + escapeHtml(item.text || '') + '</span>' + translation + provenance + '</div>';
   }).join('');
 }
-function renderDictionary(data) { $('#dictionary-result').hidden = false; $('#dictionary-empty').hidden = true; $('#dictionary-word').textContent = data.word; $('#dictionary-meaning').innerHTML = definitionItemsHtml(data); $('#dictionary-pronunciations').innerHTML = (data.phonetics || []).map((item) => '<span class="dictionary-pronunciation"><span>' + escapeHtml(item.region || '通用') + ' ' + escapeHtml(item.text || '暂无音标') + '</span>' + (item.audio ? '<button class="dictionary-audio" type="button" data-audio="' + escapeHtml(item.audio) + '" aria-label="播放' + escapeHtml(item.region || '') + '发音">🔊</button>' : '') + '</span>').join(''); bindDictionaryAudio($('#dictionary-result')); }
-async function loadDictionaryWord(word) { const requestId = ++state.dictionaryRequest; const card = $('#dictionary-card'); card.hidden = false; $('#dictionary-empty').hidden = false; $('#dictionary-result').hidden = true; $('#dictionary-empty').textContent = '正在查询词典释义、音标和发音…'; try { const source = state.currentLesson && state.currentLesson.lesson.source_language; const data = await api('/api/dictionary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: word, source_language: source || 'en', target_language: state.targetLanguage }) }); if (requestId !== state.dictionaryRequest) return; renderDictionary(data); } catch (error) { if (requestId !== state.dictionaryRequest) return; $('#dictionary-result').hidden = true; $('#dictionary-empty').hidden = false; $('#dictionary-empty').textContent = error.message; } }
-async function lookupWord(sentenceId, word) { state.currentWord = null; $('#word-empty').hidden = true; $('#word-result').hidden = false; $('#looked-word').textContent = word; $('#word-language').textContent = '查询中…'; $('#word-meaning').textContent = '正在结合上下文查询'; $('#word-save-button').classList.remove('saved'); $('#word-save-button').setAttribute('aria-pressed', 'false'); $('#word-saved-status').textContent = '点击星标收藏'; const sentence = state.currentLesson.sentences.find((item) => item.id === sentenceId); $('#word-context').textContent = sentence ? (sentence.edited_text || sentence.original_text) : ''; loadDictionaryWord(word); try { const result = await api('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sentence_id: sentenceId, word: word, target_language: state.targetLanguage, save: false }) }); state.currentWord = { sentenceId: sentenceId, word: word, meaning: result.meaning, targetLanguage: state.targetLanguage, vocabularyId: result.id || null, saved: !!result.saved }; $('#word-language').textContent = langNames[state.targetLanguage] || state.targetLanguage; $('#word-meaning').textContent = result.meaning; if (state.currentWord.saved) setWordSavedState(true); } catch (error) { $('#word-language').textContent = '暂不可用'; $('#word-meaning').textContent = error.message; } }
+function dictionaryPronunciationItemHtml(word, sourceLanguage, item, audio, locale) {
+  const region = item.region || '通用';
+  return '<span class="dictionary-pronunciation"><span>' + escapeHtml(region) + ' ' + escapeHtml(item.text || '暂无音标') + '</span><button class="dictionary-audio" type="button"' + (audio ? ' data-audio="' + escapeHtml(audio) + '"' : '') + ' data-word="' + escapeHtml(word) + '" data-language="' + escapeHtml(sourceLanguage || 'en') + '" data-locale="' + locale + '" aria-label="播放' + escapeHtml(region) + '发音">🔊</button></span>';
+}
+function dictionaryPronunciationsHtml(word, sourceLanguage, items, getAudio) {
+  const phonetics = Array.isArray(items) ? items : [];
+  let html = phonetics.map((item) => {
+    const locale = item.region === '英式' ? 'en-GB' : item.region === '澳式' ? 'en-AU' : 'en-US';
+    return dictionaryPronunciationItemHtml(word, sourceLanguage, item, getAudio(item), locale);
+  }).join('');
+  if (sourceLanguage === 'en' && !phonetics.some((item) => item.region === '英式')) {
+    html += dictionaryPronunciationItemHtml(word, sourceLanguage, { region: '英式（系统语音）', text: '系统发音' }, '', 'en-GB');
+  }
+  return html;
+}
+function renderDictionary(data) {
+  $('#dictionary-result').hidden = false; $('#dictionary-empty').hidden = true;
+  $('#dictionary-word').textContent = data.word;
+  $('#dictionary-meaning').innerHTML = definitionItemsHtml(data, data.target_language === 'zh');
+  const phonetics = data.phonetics || [];
+  $('#dictionary-pronunciations').innerHTML = dictionaryPronunciationsHtml(data.word, data.source_language, phonetics, (item) => item.audio || '');
+  warmDictionaryAudio(phonetics);
+  bindDictionaryAudio($('#dictionary-result'));
+}
+async function lookupWord(sentenceId, word) { const requestId = ++state.wordRequest; state.phraseRequest++; state.currentPhrase = null; state.currentWord = null; state.lastPhraseSelection = ''; $('#word-save-button').hidden = false; $('#dictionary-card').hidden = false; $('#word-empty').hidden = true; $('#word-result').hidden = false; $('#looked-word').textContent = word; $('#word-language').textContent = '查询中…'; $('#word-meaning').textContent = '正在获取单词释义'; $('#word-save-button').classList.remove('saved'); $('#word-save-button').setAttribute('aria-pressed', 'false'); $('#word-saved-status').textContent = '点击星标收藏'; const sentence = state.currentLesson.sentences.find((item) => item.id === sentenceId); $('#word-context').textContent = sentence ? (sentence.edited_text || sentence.original_text) : ''; try { const result = await api('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sentence_id: sentenceId, word: word, target_language: state.targetLanguage, save: false }) }); if (requestId !== state.wordRequest) return; if (result.dictionary) renderDictionary(result.dictionary); else { $('#dictionary-result').hidden = true; $('#dictionary-empty').hidden = false; $('#dictionary-empty').textContent = '暂无已保存的词典释义'; } const meaning = result.meaning || '暂无当前句释义'; state.currentWord = { sentenceId: sentenceId, word: word, meaning: meaning, targetLanguage: state.targetLanguage, vocabularyId: result.id || null, saved: !!result.saved }; $('#word-language').textContent = langNames[state.targetLanguage] || state.targetLanguage; $('#word-meaning').textContent = meaning; if (state.currentWord.saved) setWordSavedState(true); } catch (error) { if (requestId !== state.wordRequest) return; $('#word-language').textContent = '暂不可用'; $('#word-meaning').textContent = error.message; } }
+async function lookupPhrase(sentenceId, phrase) {
+  const requestId = ++state.wordRequest;
+  state.phraseRequest++;
+  state.currentWord = null;
+  state.currentPhrase = { sentenceId: sentenceId, phrase: phrase };
+  state.dictionaryRequest++;
+  $('#dictionary-card').hidden = true;
+  $('#word-empty').hidden = true;
+  $('#word-result').hidden = false;
+  $('#looked-word').textContent = phrase;
+  $('#word-language').textContent = '短语 · 查询中…';
+  $('#word-meaning').textContent = '正在结合句意查询短语';
+  const sentence = state.currentLesson?.sentences.find((item) => item.id === sentenceId);
+  $('#word-context').textContent = sentence ? (sentence.edited_text || sentence.original_text) : '';
+  $('#word-save-button').hidden = true;
+  $('#word-saved-status').textContent = '短语释义';
+  try {
+    const result = await api('/api/phrase-lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sentence_id: sentenceId, phrase: phrase, target_language: state.targetLanguage }) });
+    if (requestId !== state.wordRequest) return;
+    state.currentPhrase.meaning = result.meaning;
+    $('#word-language').textContent = '短语 · ' + (langNames[state.targetLanguage] || state.targetLanguage);
+    $('#word-meaning').textContent = result.meaning;
+    $('#word-context').textContent = result.context_text || '';
+    $('#word-saved-status').textContent = result.cached ? '已从本地缓存读取' : '结合句意生成';
+  } catch (error) {
+    if (requestId !== state.wordRequest) return;
+    state.lastPhraseSelection = '';
+    $('#word-language').textContent = '暂不可用';
+    $('#word-meaning').textContent = error.message;
+  }
+}
+function selectionElement(node) { return node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement); }
+function readSelectedPhrase() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  const startSentence = selectionElement(range.startContainer)?.closest('.sentence-item');
+  const endSentence = selectionElement(range.endContainer)?.closest('.sentence-item');
+  if (!startSentence || startSentence !== endSentence) return null;
+  const sentenceText = startSentence.querySelector('.sentence-text');
+  if (!sentenceText?.contains(range.startContainer) || !sentenceText.contains(range.endContainer)) return null;
+  let phrase = selection.toString().replace(/\s+/gu, ' ').trim();
+  phrase = phrase.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, '').trim();
+  const tokens = phrase.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*(?:-[\p{L}\p{N}]+)*/gu) || [];
+  if (tokens.length < 2 || tokens.length > 10 || phrase.length > 120) return null;
+  return { sentenceId: startSentence.dataset.sentenceId, phrase: phrase };
+}
+function handleTextSelection() {
+  window.setTimeout(() => {
+    const selected = readSelectedPhrase();
+    if (!selected) return;
+    const key = selected.sentenceId + '|' + selected.phrase.toLocaleLowerCase();
+    if (key === state.lastPhraseSelection) return;
+    state.lastPhraseSelection = key;
+    lookupPhrase(selected.sentenceId, selected.phrase);
+  }, 0);
+}
+function clearWordHighlights() { $$('.sentence-text .word.phrase-selected').forEach((word) => word.classList.remove('phrase-selected')); }
+function highlightWordRange(sentenceText, startIndex, endIndex) {
+  const words = [...sentenceText.querySelectorAll('.word')];
+  const start = Math.max(0, Math.min(startIndex, endIndex));
+  const end = Math.min(words.length - 1, Math.max(startIndex, endIndex));
+  words.forEach((word, index) => word.classList.toggle('phrase-selected', index >= start && index <= end));
+  return words.slice(start, end + 1);
+}
+function wordAtPoint(sentenceText, x, y) {
+  const direct = selectionElement(document.elementFromPoint(x, y))?.closest('.word');
+  if (direct && sentenceText.contains(direct)) return direct;
+  const bounds = sentenceText.getBoundingClientRect();
+  if (x < bounds.left || x > bounds.right || y < bounds.top - 8 || y > bounds.bottom + 8) return null;
+  let nearest = null;
+  let nearestDistance = Infinity;
+  sentenceText.querySelectorAll('.word').forEach((word) => {
+    [...word.getClientRects()].forEach((rect) => {
+      const dx = x < rect.left ? rect.left - x : x > rect.right ? x - rect.right : 0;
+      const dy = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
+      const distance = dx * dx + dy * dy;
+      if (distance < nearestDistance) { nearest = word; nearestDistance = distance; }
+    });
+  });
+  return nearestDistance <= 28 * 28 ? nearest : null;
+}
+function beginWordSelection(event) {
+  if (event.button !== 0) return;
+  const target = selectionElement(event.target);
+  const sentenceText = target?.closest('.sentence-text');
+  const word = sentenceText && wordAtPoint(sentenceText, event.clientX, event.clientY);
+  if (!sentenceText || !word) { activeWordSelection = null; document.body.classList.remove('dragging-word-selection'); clearWordHighlights(); return; }
+  const sentenceItem = sentenceText.closest('.sentence-item');
+  const words = [...sentenceText.querySelectorAll('.word')];
+  const startIndex = words.indexOf(word);
+  if (!sentenceItem || startIndex < 0) return;
+  window.getSelection()?.removeAllRanges();
+  clearWordHighlights();
+  document.body.classList.add('dragging-word-selection');
+  word.classList.add('phrase-selected');
+  activeWordSelection = { pointerId: event.pointerId, sentenceItem, sentenceText, words, startIndex, endIndex: startIndex, startX: event.clientX, startY: event.clientY, moved: false };
+}
+function updateWordSelection(event) {
+  const drag = activeWordSelection;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  const word = wordAtPoint(drag.sentenceText, event.clientX, event.clientY);
+  if (!word) return;
+  const endIndex = drag.words.indexOf(word);
+  if (endIndex < 0) return;
+  if (endIndex !== drag.startIndex || Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 4) drag.moved = true;
+  drag.endIndex = endIndex;
+  highlightWordRange(drag.sentenceText, drag.startIndex, drag.endIndex);
+}
+function finishWordSelection(event) {
+  const drag = activeWordSelection;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  activeWordSelection = null;
+  document.body.classList.remove('dragging-word-selection');
+  if (!drag.moved) return;
+  const selectedWords = highlightWordRange(drag.sentenceText, drag.startIndex, drag.endIndex);
+  if (!selectedWords.length) return;
+  suppressWordClick = true;
+  window.setTimeout(() => { suppressWordClick = false; }, 0);
+  const sentenceId = drag.sentenceItem.dataset.sentenceId;
+  if (selectedWords.length === 1) { lookupWord(sentenceId, selectedWords[0].dataset.word); return; }
+  const phrase = selectedWords.map((word) => word.dataset.word).join(' ').replace(/^[.,!?;:]+|[.,!?;:]+$/gu, '').trim();
+  const tokens = phrase.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*(?:-[\p{L}\p{N}]+)*/gu) || [];
+  if (tokens.length > 10 || phrase.length > 120) { showToast('一次最多选择 10 个词语'); return; }
+  if (tokens.length >= 2) lookupPhrase(sentenceId, phrase);
+}
+function cancelWordSelection(event) {
+  if (activeWordSelection?.pointerId !== event.pointerId) return;
+  activeWordSelection = null;
+  document.body.classList.remove('dragging-word-selection');
+}
 function setWordSavedState(saved) { const button = $('#word-save-button'); button.classList.toggle('saved', saved); button.setAttribute('aria-pressed', saved ? 'true' : 'false'); button.title = saved ? '取消收藏' : '收藏到我的词汇'; $('#word-saved-status').textContent = saved ? '已收藏到我的词汇' : '点击星标收藏'; }
-async function toggleWordSaved() { const word = state.currentWord; if (!word) { showToast('请先点击一个单词'); return; } try { if (word.saved && word.vocabularyId) { await api('/api/vocabulary/' + word.vocabularyId, { method: 'DELETE' }); word.saved = false; setWordSavedState(false); showToast('已从我的词汇移除'); } else { const result = await api('/api/vocabulary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sentence_id: word.sentenceId, word: word.word, target_language: word.targetLanguage, meaning: word.meaning, save: true }) }); word.saved = true; word.vocabularyId = result.id; setWordSavedState(true); showToast('已收藏到我的词汇'); } } catch (error) { showToast(error.message); } }
+async function toggleWordSaved() { const word = state.currentWord; if (!word) { showToast('请先点击一个单词'); return; } try { if (word.saved && word.vocabularyId) { await api('/api/vocabulary/' + word.vocabularyId, { method: 'DELETE' }); word.saved = false; setWordSavedState(false); showToast('已从我的词汇移除'); } else { const result = await api('/api/vocabulary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sentence_id: word.sentenceId, word: word.word, target_language: word.targetLanguage, meaning: word.meaning, save: true }) }); word.saved = true; word.vocabularyId = result.id; setWordSavedState(true); showToast('已收藏，正在后台生成释义和例句'); } } catch (error) { showToast(error.message); } }
 function updateProgress() { const total = state.currentLesson ? state.currentLesson.sentences.length : 0; const seen = state.playbackSeen.size; $('#progress-number').textContent = seen; $('#progress-bar').style.width = (total ? Math.min(100, seen / total * 100) : 0) + '%'; }
 function editSentence(item, id) { if (item.querySelector('.sentence-edit')) return; const sentence = state.currentLesson.sentences.find((entry) => entry.id === id); const body = item.querySelector('.sentence-body'); const text = sentence.edited_text || sentence.original_text; body.innerHTML = '<textarea class="sentence-edit" aria-label="编辑句子">' + escapeHtml(text) + '</textarea><div class="edit-times"><label>开始（秒）<input class="edit-start" type="number" min="0" step="0.1" value="' + (sentence.start_ms / 1000).toFixed(1) + '"></label><label>结束（秒）<input class="edit-end" type="number" min="0" step="0.1" value="' + (sentence.end_ms / 1000).toFixed(1) + '"></label></div><div class="sentence-actions" style="opacity:1;height:24px;margin-top:5px"><button class="sentence-action save-edit">保存</button><button class="sentence-action cancel-edit">取消</button></div>'; body.querySelector('.sentence-edit').focus(); body.querySelector('.save-edit').addEventListener('click', async () => { const updatedText = body.querySelector('.sentence-edit').value.trim(); const start = Math.round(Number(body.querySelector('.edit-start').value) * 1000); const end = Math.round(Number(body.querySelector('.edit-end').value) * 1000); if (!updatedText) return showToast('句子不能为空'); try { const result = await api('/api/sentences/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: updatedText, start_ms: start, end_ms: end }) }); sentence.edited_text = result.edited_text; sentence.start_ms = result.start_ms; sentence.end_ms = result.end_ms; renderSentences(); showToast('句子已保存'); } catch (error) { showToast(error.message); } }); body.querySelector('.cancel-edit').addEventListener('click', renderSentences); }
 function beginSplitSentence(item, id) {
@@ -140,23 +350,37 @@ async function createDemo() { try { const demo = await api('/api/lessons/demo', 
 async function openVocabularyDetail(id) {
   try {
     const item = await api('/api/vocabulary/' + id); state.currentVocabulary = item; showView('vocabulary-detail');
-    $('#vocab-detail-word').textContent = item.word; $('#vocab-detail-meaning').textContent = '正在加载简明释义…';
+    $('#vocab-detail-word').textContent = item.word;
     $('#vocab-detail-lesson').textContent = item.lesson_title ? '来源：' + item.lesson_title : '';
-    const box = $('#vocab-detail-examples'); box.textContent = '正在加载例句…';
-    try {
-      const dictionary = await api('/api/dictionary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: item.word, source_language: item.source_language, target_language: item.target_language }) });
-      $('#vocab-detail-meaning').innerHTML = definitionItemsHtml(dictionary);
-      const phonetics = (dictionary.phonetics || []).map((p) => '<span class="vocab-detail-phonetic"><span>' + escapeHtml(p.region || '发音') + ' ' + escapeHtml(p.text || '暂无音标') + '</span>' + (p.audio ? ' <button type="button" class="dictionary-audio" data-audio="' + escapeHtml(p.audio) + '" aria-label="播放' + escapeHtml(p.region || '') + '发音">🔊</button>' : '') + '</span>').join('');
-      $('#vocab-detail-pronunciation').innerHTML = phonetics;
-      const exampleItems = dictionary.example_items || (dictionary.examples || []).map((text) => ({ text: text, translation: '' }));
-      const examples = exampleItems.map((example, index) => '<p class="vocab-example"><b>' + (index + 1) + '</b><span class="vocab-example-sense">' + escapeHtml((example.part_of_speech ? example.part_of_speech + ' · ' : '') + (example.sense || '对应词义')) + '</span><span class="vocab-example-text">' + highlightWordForms(example.text, dictionary.word, 'vocab-highlight') + '</span>' + (example.translation ? '<span class="vocab-example-translation">' + highlightTranslation(example.translation, dictionary.word_translation) + '</span>' : '<span class="vocab-example-translation unavailable">暂未获取译文</span>') + '</p>').join('');
-      box.innerHTML = examples || '<p class="vocab-example-empty">暂未找到例句。</p>';
-      bindDictionaryAudio($('#vocab-detail-pronunciation'));
-    } catch (error) { box.textContent = error.message; }
+    const status = item.generation_status || 'pending';
+    if (status === 'processing' || status === 'pending') {
+      $('#vocab-detail-meaning').textContent = '正在生成简明释义…';
+      $('#vocab-detail-examples').innerHTML = '<p class="vocab-example-empty">后台正在生成学习例句，请稍候。</p>';
+      $('#vocab-detail-pronunciation').innerHTML = '';
+      clearTimeout(openVocabularyDetail.timer);
+      openVocabularyDetail.timer = setTimeout(() => openVocabularyDetail(id), 1200);
+      return;
+    }
+    if (status === 'failed') {
+      $('#vocab-detail-meaning').textContent = item.generation_error || '生成失败';
+      $('#vocab-detail-examples').innerHTML = '<p class="vocab-example-empty">生成失败，请稍后重试。</p>';
+      return;
+    }
+    const meaningItems = Array.isArray(item.brief_items) && item.brief_items.length
+      ? item.brief_items
+      : (item.meaning ? [{ part_of_speech: item.part_of_speech || '', text: item.meaning, provider: item.generation_source === 'language-model' ? 'local_model' : 'unknown' }] : []);
+    $('#vocab-detail-meaning').innerHTML = definitionItemsHtml({ brief_items: meaningItems, target_language: item.target_language }, true);
+    const phonetics = item.phonetics || [];
+    $('#vocab-detail-pronunciation').innerHTML = dictionaryPronunciationsHtml(
+      item.word, item.source_language, phonetics, (p) => p.audio_path ? '/api/vocabulary/' + encodeURIComponent(item.id) + '/audio?region=' + encodeURIComponent(p.region || '') : '',
+    ) || '<span class="definition-unavailable">暂无音标</span>';
+    const examples = (item.examples || []).map((example, index) => '<p class="vocab-example"><b>' + (index + 1) + '</b><span class="vocab-example-text">' + highlightWordForms(example.example_text, item.word, 'vocab-highlight') + '</span>' + (example.translated_text ? '<span class="vocab-example-translation">' + escapeHtml(example.translated_text) + '</span>' : '<span class="vocab-example-translation unavailable">暂未获取译文</span>') + '</p>').join('');
+    $('#vocab-detail-examples').innerHTML = examples || '<p class="vocab-example-empty">暂未找到例句。</p>';
+    bindDictionaryAudio($('#vocab-detail-pronunciation'));
   } catch (error) { showToast(error.message); }
 }
 async function deleteVocabularyItem(id) { try { await api('/api/vocabulary/' + id, { method: 'DELETE' }); state.currentVocabulary = null; showToast('已删除收藏'); await renderVocabulary(); showView('vocabulary'); } catch (error) { showToast(error.message); } }
-async function renderVocabulary() { const list = $('#vocab-list'); try { const items = await api('/api/vocabulary'); if (!items.length) { list.innerHTML = ''; $('#empty-vocabulary').style.display = 'block'; return; } $('#empty-vocabulary').style.display = 'none'; list.innerHTML = items.map((item) => '<article class="vocab-item" data-vocab-id="' + escapeHtml(item.id) + '"><button class="vocab-open" type="button"><strong class="vocab-word">' + escapeHtml(item.word) + '</strong><span class="vocab-meaning">' + escapeHtml(item.meaning) + '<small class="vocab-context">' + escapeHtml(item.lesson_title) + '</small></span><span class="vocab-lang">' + escapeHtml(langNames[item.target_language] || item.target_language) + '</span><span class="vocab-open-hint">查看详情 →</span></button><button class="vocab-delete" type="button">删除</button></article>').join(''); $$('.vocab-item').forEach((card) => { const id = card.dataset.vocabId; card.querySelector('.vocab-open').addEventListener('click', () => openVocabularyDetail(id)); card.querySelector('.vocab-delete').addEventListener('click', () => deleteVocabularyItem(id)); }); } catch (error) { showToast(error.message); } }
+async function renderVocabulary() { const list = $('#vocab-list'); try { const items = await api('/api/vocabulary'); if (!items.length) { list.innerHTML = ''; $('#empty-vocabulary').style.display = 'block'; return; } $('#empty-vocabulary').style.display = 'none'; list.innerHTML = items.map((item) => { const meaning = ['pending', 'processing'].includes(item.generation_status) ? '正在生成释义和例句…' : item.meaning; return '<article class="vocab-item" data-vocab-id="' + escapeHtml(item.id) + '"><button class="vocab-open" type="button"><strong class="vocab-word">' + escapeHtml(item.word) + '</strong><span class="vocab-meaning">' + escapeHtml(meaning) + '<small class="vocab-context">' + escapeHtml(item.lesson_title) + '</small></span><span class="vocab-lang">' + escapeHtml(langNames[item.target_language] || item.target_language) + '</span><span class="vocab-open-hint">查看详情 →</span></button><button class="vocab-delete" type="button">删除</button></article>'; }).join(''); $$('.vocab-item').forEach((card) => { const id = card.dataset.vocabId; card.querySelector('.vocab-open').addEventListener('click', () => openVocabularyDetail(id)); card.querySelector('.vocab-delete').addEventListener('click', () => deleteVocabularyItem(id)); }); } catch (error) { showToast(error.message); } }
 async function requestModelSwitch(model, behavior) {
   try {
     const result = await api('/api/recognition/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, behavior }) });
@@ -191,7 +415,7 @@ async function initializeRecognitionSelector() {
 
 function setupEvents() {
   setupSidebarResize();
-  $('#target-language').value = state.targetLanguage; $('#target-language').addEventListener('change', (event) => { state.targetLanguage = event.target.value; localStorage.setItem('target-language', state.targetLanguage); if (state.currentLesson) renderSentences(); if (state.currentWord) loadDictionaryWord(state.currentWord.word); showToast('翻译目标：' + langNames[state.targetLanguage]); });
+  $('#target-language').value = state.targetLanguage; $('#target-language').addEventListener('change', (event) => { state.targetLanguage = event.target.value; localStorage.setItem('target-language', state.targetLanguage); if (state.currentLesson) renderSentences(); if (state.currentPhrase) lookupPhrase(state.currentPhrase.sentenceId, state.currentPhrase.phrase); else if (state.currentWord) lookupWord(state.currentWord.sentenceId, state.currentWord.word); showToast('翻译目标：' + langNames[state.targetLanguage]); });
   $('#recognition-model').value = state.recognitionModel; $('#recognition-model').addEventListener('change', (event) => { const model = event.target.value; requestModelSwitch(model, 'immediate'); });
   initializeRecognitionSelector();
   $('#choose-file').addEventListener('click', () => $('#audio-file').click()); $('#empty-upload').addEventListener('click', () => $('#audio-file').click()); $('#new-upload-side').addEventListener('click', () => { showView('library'); $('#audio-file').click(); }); $('#audio-file').addEventListener('change', (event) => { uploadFile(event.target.files[0]); event.target.value = ''; });
@@ -209,6 +433,11 @@ function setupEvents() {
   $$('#model-switch-backdrop [data-model-behavior]').forEach((button) => button.addEventListener('click', async () => { const backdrop = $('#model-switch-backdrop'); const behavior = button.dataset.modelBehavior; if (behavior === 'immediate') return showToast('当前有转写任务，不能立即切换'); backdrop.hidden = true; await requestModelSwitch(backdrop.dataset.model, behavior); })); $('#model-switch-close').addEventListener('click', () => { $('#model-switch-backdrop').hidden = true; $('#recognition-model').value = state.recognitionModel; }); $('#model-switch-backdrop').addEventListener('click', (event) => { if (event.target === $('#model-switch-backdrop')) { $('#model-switch-backdrop').hidden = true; $('#recognition-model').value = state.recognitionModel; } });
   $('#rename-input').addEventListener('keydown', (event) => { if (event.key === 'Enter') confirmLessonAction(); });
   $('#word-save-button').addEventListener('click', toggleWordSaved);
+  document.addEventListener('pointerdown', beginWordSelection, true);
+  document.addEventListener('pointermove', updateWordSelection, true);
+  document.addEventListener('pointerup', finishWordSelection, true);
+  document.addEventListener('pointercancel', cancelWordSelection, true);
+  document.addEventListener('keyup', (event) => { if (event.shiftKey || ['Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) handleTextSelection(); });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') { closeLessonMenus(); if (!$('#lesson-dialog-backdrop').hidden) closeLessonDialog(); } });
 }
 function setSidebarWidth(width, persist) { const max = Math.min(360, window.innerWidth - 320); state.sidebarWidth = Math.max(180, Math.min(max, width)); document.documentElement.style.setProperty('--sidebar-width', state.sidebarWidth + 'px'); $('#sidebar-resize').setAttribute('aria-valuenow', String(Math.round(state.sidebarWidth))); if (persist) localStorage.setItem('sidebar-width', String(Math.round(state.sidebarWidth))); }

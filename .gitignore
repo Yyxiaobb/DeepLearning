@@ -5,6 +5,8 @@ __pycache__/
 data/
 uploads/
 models/whisper/
+models/llm/
+models/llama.cpp/
 *.py[cod]
 .test-data/
 .pytest-tmp/
